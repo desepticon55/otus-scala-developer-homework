@@ -1,6 +1,8 @@
 package ru.otus.jdbc.homework
 
 
+import java.util.UUID
+
 import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
 import org.flywaydb.core.Flyway
 import org.scalacheck.Arbitrary._
@@ -14,11 +16,10 @@ import ru.otus.jdbc.dao.slick.UserDaoSlickImpl
 import ru.otus.jdbc.model.{Role, User}
 import slick.jdbc.JdbcBackend.Database
 
-import java.util.UUID
 import scala.concurrent.ExecutionContext.Implicits.global
 
 class UserDaoSlickImplTest extends AnyFreeSpec
-  with ScalaCheckDrivenPropertyChecks with ScalaFutures  with ForAllTestContainer {
+  with ScalaCheckDrivenPropertyChecks with ScalaFutures with ForAllTestContainer {
   override val container: PostgreSQLContainer = PostgreSQLContainer()
 
   var db: Database = _
@@ -39,7 +40,10 @@ class UserDaoSlickImplTest extends AnyFreeSpec
 
   override implicit def patienceConfig: PatienceConfig = PatienceConfig(timeout = scaled(Span(10, Seconds)))
 
-  implicit lazy val arbString: Arbitrary[String] = Arbitrary(arbitrary[List[Char]] map (_.filter(_ != 0).mkString))
+  val symbolList: List[Char] = List('A', 'B', 'C', 'D', 'E', 'F', 'G')
+  val alphaUpperChar: Gen[Char] = Gen.choose(65.toChar, 90.toChar)
+  val alphaUpperStr: Gen[String] = Gen.listOf(alphaUpperChar).map(_.mkString)
+  implicit lazy val arbString: Arbitrary[String] = Arbitrary(alphaUpperStr)
 
   implicit val genUser: Gen[User] = for {
     id <- Gen.option(Gen.uuid)
@@ -51,72 +55,75 @@ class UserDaoSlickImplTest extends AnyFreeSpec
 
   implicit val arbitraryUser: Arbitrary[User] = Arbitrary(genUser)
 
-    "getUser" - {
-      "create and get unknown user" in {
-        forAll { (users: Seq[User], userId: UUID) =>
-          val dao = new UserDaoSlickImpl(db)
-          users .foreach(dao.createUser(_).futureValue)
-
-          dao.getUser(userId).futureValue shouldBe None
-        }
-      }
-    }
-
-
-    "updateUser" - {
-      "update known user - keep other users the same" in {
-        forAll { (users: Seq[User], user1: User, user2: User) =>
-          val dao = new UserDaoSlickImpl(db)
-          val createdUsers = users.map(dao.createUser(_).futureValue)
-          val createdUser = dao.createUser(user1).futureValue
-          val toUpdate = user2.copy(id = createdUser.id)
-
-          dao.updateUser(toUpdate)
-
-          dao.getUser(toUpdate.id.get).futureValue shouldBe Some(toUpdate)
-          createdUsers.foreach { u => dao.getUser(u.id.get).futureValue shouldBe Some(u)
-          }
-        }
-      }
-    }
-
-    "delete known user - keep other users the same" in {
-      forAll { (users1: Seq[User], user1: User) =>
+  "getUser" - {
+    "create and get unknown user" in {
+      forAll { (users: Seq[User], userId: UUID) =>
         val dao = new UserDaoSlickImpl(db)
-        val createdUsers1 = users1.map(dao.createUser(_).futureValue)
-        val createdUser = dao.createUser(user1).futureValue
+        users.foreach(dao.createUser(_).futureValue)
 
-        dao.getUser(createdUser.id.get).futureValue shouldBe Some(createdUser)
-        dao.deleteUser(createdUser.id.get).futureValue shouldBe Some(createdUser)
-        dao.getUser(createdUser.id.get).futureValue shouldBe None
-
-        createdUsers1.foreach { u => dao.getUser(u.id.get).futureValue shouldBe Some(u)}
+        dao.getUser(userId).futureValue shouldBe None
       }
     }
+  }
 
 
-        "findByLastName" in {
-          forAll { (users1: Seq[User], lastName: String, users2: Seq[User]) =>
-            val dao               = new UserDaoSlickImpl(db)
-            val withOtherLastName = users1.filterNot(_.lastName == lastName)
-            val withLastName      = users2.map(_.copy(lastName = lastName))
-
-            withOtherLastName.foreach(dao.createUser(_).futureValue)
-            val createdWithLasName = withLastName.map(dao.createUser(_).futureValue)
-
-            dao.findByLastName(lastName).futureValue.toSet shouldBe createdWithLasName.toSet
-          }
-        }
-
-    "findAll" in {
-      forAll { users: Seq[User] =>
+  "updateUser" - {
+    "update known user - keep other users the same" in {
+      forAll { (users: Seq[User], user1: User, user2: User) =>
         val dao = new UserDaoSlickImpl(db)
         val createdUsers = users.map(dao.createUser(_).futureValue)
+        val createdUser = dao.createUser(user1).futureValue
+        println(s"old user ${createdUser}")
+        val toUpdate = user2.copy(id = createdUser.id)
+        println(s"new user ${toUpdate}")
 
-        dao.findAll().futureValue.toSet shouldBe createdUsers.toSet
+        dao.updateUser(toUpdate)
+
+        val user = dao.getUser(toUpdate.id.get).futureValue
+        println(s"fact user ${user}")
+        user shouldBe Some(toUpdate)
+        createdUsers.foreach { u => dao.getUser(u.id.get).futureValue shouldBe Some(u)
+        }
       }
     }
+  }
 
+  "delete known user - keep other users the same" in {
+    forAll { (users1: Seq[User], user1: User) =>
+      val dao = new UserDaoSlickImpl(db)
+      val createdUsers1 = users1.map(dao.createUser(_).futureValue)
+      val createdUser = dao.createUser(user1).futureValue
+
+      dao.getUser(createdUser.id.get).futureValue shouldBe Some(createdUser)
+      dao.deleteUser(createdUser.id.get).futureValue shouldBe Some(createdUser)
+      dao.getUser(createdUser.id.get).futureValue shouldBe None
+
+      createdUsers1.foreach { u => dao.getUser(u.id.get).futureValue shouldBe Some(u) }
+    }
+  }
+
+
+  "findByLastName" in {
+    forAll { (users1: Seq[User], lastName: String, users2: Seq[User]) =>
+      val dao = new UserDaoSlickImpl(db)
+      val withOtherLastName = users1.filterNot(_.lastName == lastName)
+      val withLastName = users2.map(_.copy(lastName = lastName))
+
+      withOtherLastName.foreach(dao.createUser(_).futureValue)
+      val createdWithLasName = withLastName.map(dao.createUser(_).futureValue)
+
+      dao.findByLastName(lastName).futureValue.toSet shouldBe createdWithLasName.toSet
+    }
+  }
+
+  "findAll" in {
+    forAll { users: Seq[User] =>
+      val dao = new UserDaoSlickImpl(db)
+      val createdUsers = users.map(dao.createUser(_).futureValue)
+
+      dao.findAll().futureValue.toSet shouldBe createdUsers.toSet
+    }
+  }
 
 
   override def beforeStop(): Unit = {
